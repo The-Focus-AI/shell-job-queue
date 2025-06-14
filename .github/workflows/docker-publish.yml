@@ -29,11 +29,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set lowercase owner
+        id: lc_owner
+        run: echo "owner_lc=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_OUTPUT
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/processjobqueue:latest
-            ghcr.io/${{ github.repository_owner }}/processjobqueue:${{ github.sha }} 
+            ghcr.io/${{ steps.lc_owner.outputs.owner_lc }}/processjobqueue:latest
+            ghcr.io/${{ steps.lc_owner.outputs.owner_lc }}/processjobqueue:${{ github.sha }} 
