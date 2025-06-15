@@ -11,4 +11,6 @@ RUN go build -o server main.go
 
 EXPOSE 8080
 
+ENV JOBS_DIR=/data/jobs
+
 CMD ["./server"]

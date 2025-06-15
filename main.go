@@ -92,7 +92,7 @@ func submitJob(w http.ResponseWriter, r *http.Request, fixedArgs []string) {
 		return
 	}
 	id := uuid.NewString()
-	jobDir := filepath.Join("jobs", id)
+	jobDir := filepath.Join(getJobsDir(), id)
 	os.MkdirAll(jobDir, 0755)
 
 	args := req.Args
@@ -154,10 +154,10 @@ func jobHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Result not available", http.StatusNotFound)
 			return
 		}
-		path := filepath.Join("jobs", id, "stdout.txt")
+		path := filepath.Join(getJobsDir(), id, "stdout.txt")
 		http.ServeFile(w, r, path)
 	case "log":
-		path := filepath.Join("jobs", id, "stderr.txt")
+		path := filepath.Join(getJobsDir(), id, "stderr.txt")
 		if _, err := os.Stat(path); err != nil {
 			http.Error(w, "Log not available", http.StatusNotFound)
 			return
@@ -186,7 +186,7 @@ func workerLoop() {
 }
 
 func runJob(meta *JobMeta) {
-	jobDir := filepath.Join("jobs", meta.ID)
+	jobDir := filepath.Join(getJobsDir(), meta.ID)
 	stdoutPath := filepath.Join(jobDir, "stdout.txt")
 	stderrPath := filepath.Join(jobDir, "stderr.txt")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -236,13 +236,13 @@ func runJob(meta *JobMeta) {
 }
 
 func saveMeta(meta *JobMeta) {
-	path := filepath.Join("jobs", meta.ID, "meta.json")
+	path := filepath.Join(getJobsDir(), meta.ID, "meta.json")
 	data, _ := json.MarshalIndent(meta, "", "  ")
 	os.WriteFile(path, data, 0644)
 }
 
 func loadMeta(id string) (*JobMeta, error) {
-	path := filepath.Join("jobs", id, "meta.json")
+	path := filepath.Join(getJobsDir(), id, "meta.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -263,7 +263,7 @@ func sendWebhook(meta *JobMeta) {
 }
 
 func listJobs(w http.ResponseWriter, r *http.Request) {
-	entries, err := os.ReadDir("jobs")
+	entries, err := os.ReadDir(getJobsDir())
 	if err != nil {
 		http.Error(w, "Failed to read jobs directory", http.StatusInternalServerError)
 		return
@@ -281,7 +281,7 @@ func listJobs(w http.ResponseWriter, r *http.Request) {
 		if !entry.IsDir() {
 			continue
 		}
-		metaPath := filepath.Join("jobs", entry.Name(), "meta.json")
+		metaPath := filepath.Join(getJobsDir(), entry.Name(), "meta.json")
 		data, err := os.ReadFile(metaPath)
 		if err != nil {
 			continue
@@ -318,4 +318,12 @@ func listJobs(w http.ResponseWriter, r *http.Request) {
 	})
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(jobs)
+}
+
+func getJobsDir() string {
+	dir := os.Getenv("JOBS_DIR")
+	if dir == "" {
+		dir = "jobs"
+	}
+	return dir
 }
