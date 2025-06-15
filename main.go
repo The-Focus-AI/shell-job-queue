@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +70,10 @@ func jobsHandler(w http.ResponseWriter, r *http.Request, fixedArgs []string) {
 		submitJob(w, r, fixedArgs)
 		return
 	}
+	if r.URL.Path == "/jobs" && r.Method == http.MethodGet {
+		listJobs(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/jobs/") {
 		jobHandler(w, r)
 		return
@@ -105,11 +110,23 @@ func submitJob(w http.ResponseWriter, r *http.Request, fixedArgs []string) {
 	}
 	saveMeta(meta)
 	queue <- meta
+
+	baseURL := os.Getenv("BASE_URL")
+	statusPath := "/jobs/" + id + "/status"
+	resultPath := "/jobs/" + id + "/result"
+	logPath := "/jobs/" + id + "/log"
+	if baseURL != "" {
+		statusPath = baseURL + statusPath
+		resultPath = baseURL + resultPath
+		logPath = baseURL + logPath
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"id":         id,
-		"status_url": "/jobs/" + id + "/status",
-		"result_url": "/jobs/" + id + "/result",
+		"status_url": statusPath,
+		"result_url": resultPath,
+		"log_url":    logPath,
 	})
 }
 
@@ -138,6 +155,13 @@ func jobHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		path := filepath.Join("jobs", id, "stdout.txt")
+		http.ServeFile(w, r, path)
+	case "log":
+		path := filepath.Join("jobs", id, "stderr.txt")
+		if _, err := os.Stat(path); err != nil {
+			http.Error(w, "Log not available", http.StatusNotFound)
+			return
+		}
 		http.ServeFile(w, r, path)
 	case "cancel":
 		if r.Method != http.MethodPut {
@@ -236,4 +260,62 @@ func sendWebhook(meta *JobMeta) {
 	}
 	data, _ := json.Marshal(payload)
 	http.Post(meta.Webhook, "application/json", bytes.NewReader(data))
+}
+
+func listJobs(w http.ResponseWriter, r *http.Request) {
+	entries, err := os.ReadDir("jobs")
+	if err != nil {
+		http.Error(w, "Failed to read jobs directory", http.StatusInternalServerError)
+		return
+	}
+	var jobs []struct {
+		ID         string   `json:"id"`
+		Args       []string `json:"args"`
+		Status     string   `json:"status"`
+		ResultURL  string   `json:"result_url"`
+		LogURL     string   `json:"log_url"`
+		EnqueuedAt string   `json:"enqueued_at"`
+	}
+	baseURL := os.Getenv("BASE_URL")
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		metaPath := filepath.Join("jobs", entry.Name(), "meta.json")
+		data, err := os.ReadFile(metaPath)
+		if err != nil {
+			continue
+		}
+		var meta JobMeta
+		if err := json.Unmarshal(data, &meta); err != nil {
+			continue
+		}
+		resultPath := "/jobs/" + meta.ID + "/result"
+		logPath := "/jobs/" + meta.ID + "/log"
+		if baseURL != "" {
+			resultPath = baseURL + resultPath
+			logPath = baseURL + logPath
+		}
+		jobs = append(jobs, struct {
+			ID         string   `json:"id"`
+			Args       []string `json:"args"`
+			Status     string   `json:"status"`
+			ResultURL  string   `json:"result_url"`
+			LogURL     string   `json:"log_url"`
+			EnqueuedAt string   `json:"enqueued_at"`
+		}{
+			ID:         meta.ID,
+			Args:       meta.Args,
+			Status:     meta.Status,
+			ResultURL:  resultPath,
+			LogURL:     logPath,
+			EnqueuedAt: meta.EnqueuedAt.Format(time.RFC3339),
+		})
+	}
+	// Sort jobs by EnqueuedAt descending
+	sort.Slice(jobs, func(i, j int) bool {
+		return jobs[i].EnqueuedAt > jobs[j].EnqueuedAt
+	})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(jobs)
 }
