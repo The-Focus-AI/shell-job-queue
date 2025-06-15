@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,10 +41,21 @@ type RunningJob struct {
 }
 
 func main() {
-	http.HandleFunc("/jobs", submitJob)
-	http.HandleFunc("/jobs/", jobHandler)
+	var fixedArgs []string
+	if len(os.Args) > 1 {
+		fixedArgs = os.Args[1:]
+		fmt.Printf("Server running on :8080 (fixed command: %v)\n", fixedArgs)
+	} else {
+		fmt.Println("Server running on :8080")
+	}
+
+	http.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
+		jobsHandler(w, r, fixedArgs)
+	})
+	http.HandleFunc("/jobs/", func(w http.ResponseWriter, r *http.Request) {
+		jobsHandler(w, r, fixedArgs)
+	})
 	go workerLoop()
-	fmt.Println("Server running on :8080")
 	err := http.ListenAndServe(":8080", nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start server: %v\n", err)
@@ -51,7 +63,20 @@ func main() {
 	}
 }
 
-func submitJob(w http.ResponseWriter, r *http.Request) {
+func jobsHandler(w http.ResponseWriter, r *http.Request, fixedArgs []string) {
+	fmt.Printf("[DEBUG] jobsHandler: method=%s path=%s\n", r.Method, r.URL.Path)
+	if r.URL.Path == "/jobs" && r.Method == http.MethodPost {
+		submitJob(w, r, fixedArgs)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/jobs/") {
+		jobHandler(w, r)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func submitJob(w http.ResponseWriter, r *http.Request, fixedArgs []string) {
 	var req struct {
 		Args     []string `json:"args"`
 		MimeType string   `json:"mime_type,omitempty"`
@@ -65,9 +90,14 @@ func submitJob(w http.ResponseWriter, r *http.Request) {
 	jobDir := filepath.Join("jobs", id)
 	os.MkdirAll(jobDir, 0755)
 
+	args := req.Args
+	if len(fixedArgs) > 0 {
+		args = append(append([]string{}, fixedArgs...), req.Args...)
+	}
+
 	meta := &JobMeta{
 		ID:         id,
-		Args:       req.Args,
+		Args:       args,
 		MimeType:   req.MimeType,
 		Webhook:    req.Webhook,
 		Status:     "IN_QUEUE",
@@ -84,16 +114,24 @@ func submitJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func jobHandler(w http.ResponseWriter, r *http.Request) {
-	id := filepath.Base(r.URL.Path)
-	switch {
-	case r.URL.Path == "/jobs/"+id+"/status":
+	// Extract job ID and subpath
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/jobs/"), "/")
+	if len(parts) < 2 {
+		http.NotFound(w, r)
+		return
+	}
+	id := parts[0]
+	endpoint := parts[1]
+
+	switch endpoint {
+	case "status":
 		meta, err := loadMeta(id)
 		if err != nil {
 			http.Error(w, "Job not found", http.StatusNotFound)
 			return
 		}
 		json.NewEncoder(w).Encode(meta)
-	case r.URL.Path == "/jobs/"+id+"/result":
+	case "result":
 		meta, err := loadMeta(id)
 		if err != nil || meta.Status != "COMPLETED" {
 			http.Error(w, "Result not available", http.StatusNotFound)
@@ -101,7 +139,11 @@ func jobHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		path := filepath.Join("jobs", id, "stdout.txt")
 		http.ServeFile(w, r, path)
-	case r.Method == http.MethodPut && r.URL.Path == "/jobs/"+id+"/cancel":
+	case "cancel":
+		if r.Method != http.MethodPut {
+			http.NotFound(w, r)
+			return
+		}
 		mu.Lock()
 		if job, ok := runningJobs[id]; ok {
 			job.Cancel()
