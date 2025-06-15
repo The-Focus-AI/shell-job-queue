@@ -44,9 +44,9 @@ func main() {
 	var fixedArgs []string
 	if len(os.Args) > 1 {
 		fixedArgs = os.Args[1:]
-		fmt.Printf("Server running on :8080 (fixed command: %v)\n", fixedArgs)
+		fmt.Fprintf(os.Stderr, "Server running on :8080 (fixed command: %v)\n", fixedArgs)
 	} else {
-		fmt.Println("Server running on :8080")
+		fmt.Fprintln(os.Stderr, "Server running on :8080")
 	}
 
 	http.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +64,7 @@ func main() {
 }
 
 func jobsHandler(w http.ResponseWriter, r *http.Request, fixedArgs []string) {
-	fmt.Printf("[DEBUG] jobsHandler: method=%s path=%s\n", r.Method, r.URL.Path)
+	fmt.Fprintf(os.Stderr, "[DEBUG] jobsHandler: method=%s path=%s\n", r.Method, r.URL.Path)
 	if r.URL.Path == "/jobs" && r.Method == http.MethodPost {
 		submitJob(w, r, fixedArgs)
 		return
