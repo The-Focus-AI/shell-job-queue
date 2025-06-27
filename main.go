@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -29,9 +30,14 @@ type JobMeta struct {
 	CompletedAt time.Time `json:"completed_at,omitempty"`
 }
 
+type queuedJob struct {
+	meta          *JobMeta
+	inputFilePath string
+}
+
 var (
 	runningJobs = make(map[string]*RunningJob)
-	queue       = make(chan *JobMeta, 100)
+	queue       = make(chan *queuedJob, 100)
 	mu          sync.Mutex
 )
 
@@ -87,13 +93,27 @@ func submitJob(w http.ResponseWriter, r *http.Request, fixedArgs []string) {
 		MimeType string   `json:"mime_type,omitempty"`
 		Webhook  string   `json:"webhook,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+
 	id := uuid.NewString()
 	jobDir := filepath.Join(getJobsDir(), id)
 	os.MkdirAll(jobDir, 0755)
+
+	// Save any remaining body as input file
+	inputFilePath := ""
+	remaining, _ := io.ReadAll(r.Body)
+	if len(remaining) > 0 {
+		inputFilePath = filepath.Join(os.TempDir(), "input-"+id+".tmp")
+		f, err := os.Create(inputFilePath)
+		if err == nil {
+			_, _ = f.Write(remaining)
+			f.Close()
+		}
+	}
 
 	args := req.Args
 	if len(fixedArgs) > 0 {
@@ -109,7 +129,7 @@ func submitJob(w http.ResponseWriter, r *http.Request, fixedArgs []string) {
 		EnqueuedAt: time.Now(),
 	}
 	saveMeta(meta)
-	queue <- meta
+	queue <- &queuedJob{meta: meta, inputFilePath: inputFilePath}
 
 	baseURL := os.Getenv("BASE_URL")
 	statusPath := "/jobs/" + id + "/status"
@@ -180,12 +200,12 @@ func jobHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func workerLoop() {
-	for meta := range queue {
-		go runJob(meta)
+	for qj := range queue {
+		go runJob(qj.meta, qj.inputFilePath)
 	}
 }
 
-func runJob(meta *JobMeta) {
+func runJob(meta *JobMeta, inputFilePath string) {
 	jobDir := filepath.Join(getJobsDir(), meta.ID)
 	stdoutPath := filepath.Join(jobDir, "stdout.txt")
 	stderrPath := filepath.Join(jobDir, "stderr.txt")
@@ -196,6 +216,15 @@ func runJob(meta *JobMeta) {
 	stderrFile, _ := os.Create(stderrPath)
 	cmd.Stdout = stdoutFile
 	cmd.Stderr = stderrFile
+
+	// If input file exists, use it as stdin
+	if inputFilePath != "" {
+		inFile, err := os.Open(inputFilePath)
+		if err == nil {
+			cmd.Stdin = inFile
+			defer inFile.Close()
+		}
+	}
 
 	if err := cmd.Start(); err != nil {
 		meta.Status = "FAILED"
@@ -220,6 +249,11 @@ func runJob(meta *JobMeta) {
 
 	stdoutFile.Close()
 	stderrFile.Close()
+
+	// Remove input file after job completes
+	if inputFilePath != "" {
+		os.Remove(inputFilePath)
+	}
 
 	if ctx.Err() == context.Canceled {
 		meta.Status = "CANCELED"
