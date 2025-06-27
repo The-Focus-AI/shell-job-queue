@@ -28,6 +28,9 @@ type JobMeta struct {
 	EnqueuedAt  time.Time `json:"enqueued_at"`
 	StartedAt   time.Time `json:"started_at,omitempty"`
 	CompletedAt time.Time `json:"completed_at,omitempty"`
+	StatusURL   string    `json:"status_url,omitempty"`
+	ResultURL   string    `json:"result_url,omitempty"`
+	LogURL      string    `json:"log_url,omitempty"`
 }
 
 type queuedJob struct {
@@ -128,9 +131,6 @@ func submitJob(w http.ResponseWriter, r *http.Request, fixedArgs []string) {
 		Status:     "IN_QUEUE",
 		EnqueuedAt: time.Now(),
 	}
-	saveMeta(meta)
-	queue <- &queuedJob{meta: meta, inputFilePath: inputFilePath}
-
 	baseURL := os.Getenv("BASE_URL")
 	statusPath := "/jobs/" + id + "/status"
 	resultPath := "/jobs/" + id + "/result"
@@ -140,6 +140,11 @@ func submitJob(w http.ResponseWriter, r *http.Request, fixedArgs []string) {
 		resultPath = baseURL + resultPath
 		logPath = baseURL + logPath
 	}
+	meta.StatusURL = statusPath
+	meta.ResultURL = resultPath
+	meta.LogURL = logPath
+	saveMeta(meta)
+	queue <- &queuedJob{meta: meta, inputFilePath: inputFilePath}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
