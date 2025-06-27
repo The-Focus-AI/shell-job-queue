@@ -226,8 +226,15 @@ func runJob(meta *JobMeta, inputFilePath string) {
 		}
 	}
 
+	// Log the command if DEBUG=1
+	if os.Getenv("DEBUG") == "1" {
+		fmt.Fprintf(os.Stderr, "[DEBUG] Running command: %v\n", cmd.Args)
+	}
+
 	if err := cmd.Start(); err != nil {
 		meta.Status = "FAILED"
+		meta.StartedAt = time.Now()
+		meta.CompletedAt = meta.StartedAt
 		saveMeta(meta)
 		return
 	}
@@ -264,7 +271,14 @@ func runJob(meta *JobMeta, inputFilePath string) {
 	}
 	saveMeta(meta)
 
+	if os.Getenv("DEBUG") == "1" {
+		fmt.Fprintf(os.Stderr, "[DEBUG] Job finished: id=%s status=%s\n", meta.ID, meta.Status)
+	}
+
 	if meta.Webhook != "" {
+		if os.Getenv("DEBUG") == "1" {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Triggering webhook: url=%s id=%s status=%s\n", meta.Webhook, meta.ID, meta.Status)
+		}
 		go sendWebhook(meta)
 	}
 }
