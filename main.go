@@ -59,6 +59,65 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Server running on :8080")
 	}
 
+	// Get the public directory path
+	publicDir := getPublicDir()
+	fmt.Fprintf(os.Stderr, "Serving static files from: %s\n", publicDir)
+
+	// Serve static files from public directory
+	fs := http.FileServer(http.Dir(publicDir))
+	http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// If the request is for the root path and no index file exists, show a simple status page
+		if r.URL.Path == "/" {
+			// Check if index.html exists in public directory
+			indexPath := filepath.Join(publicDir, "index.html")
+			if _, err := os.Stat(indexPath); os.IsNotExist(err) {
+				// Serve a simple status page
+				w.Header().Set("Content-Type", "text/html")
+				fmt.Fprintf(w, `<!DOCTYPE html>
+<html>
+<head>
+    <title>Shell Job Queue</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .status { background: #f0f0f0; padding: 20px; border-radius: 5px; }
+        .endpoint { background: #e8f4f8; padding: 10px; margin: 10px 0; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <h1>Shell Job Queue Server</h1>
+    <div class="status">
+        <h2>Server Status: Running</h2>
+        <p>Server is running on port 8080</p>
+        <p>Static files directory: %s</p>
+    </div>
+    <h2>Available Endpoints:</h2>
+    <div class="endpoint">
+        <strong>POST /jobs</strong> - Submit a new job
+    </div>
+    <div class="endpoint">
+        <strong>GET /jobs</strong> - List all jobs
+    </div>
+    <div class="endpoint">
+        <strong>GET /jobs/{id}/status</strong> - Get job status
+    </div>
+    <div class="endpoint">
+        <strong>GET /jobs/{id}/result</strong> - Get job result
+    </div>
+    <div class="endpoint">
+        <strong>GET /jobs/{id}/log</strong> - Get job log
+    </div>
+    <div class="endpoint">
+        <strong>PUT /jobs/{id}/cancel</strong> - Cancel a running job
+    </div>
+</body>
+</html>`, publicDir)
+				return
+			}
+		}
+		// Serve static files from public directory
+		fs.ServeHTTP(w, r)
+	}))
+
 	http.HandleFunc("/jobs", func(w http.ResponseWriter, r *http.Request) {
 		jobsHandler(w, r, fixedArgs)
 	})
@@ -379,4 +438,25 @@ func getJobsDir() string {
 		dir = "jobs"
 	}
 	return dir
+}
+
+// getPublicDir returns the path to the public directory
+// Priority: 1. PUBLIC_DIR env var, 2. "public" relative to executable, 3. "public" relative to current dir
+func getPublicDir() string {
+	// Check if PUBLIC_DIR environment variable is set
+	if envDir := os.Getenv("PUBLIC_DIR"); envDir != "" {
+		return envDir
+	}
+
+	// Try to find the executable's directory and look for "public" there
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		publicPath := filepath.Join(exeDir, "public")
+		if _, err := os.Stat(publicPath); err == nil {
+			return publicPath
+		}
+	}
+
+	// Fallback to "public" in current directory
+	return "public"
 }

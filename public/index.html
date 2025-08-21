@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shell Job Queue - Public Page</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        h1 {
+            color: #4a5568;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .status-card {
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .endpoint {
+            background: #edf2f7;
+            border-left: 4px solid #4299e1;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 0 5px 5px 0;
+        }
+        .method {
+            font-weight: bold;
+            color: #2b6cb0;
+        }
+        .url {
+            font-family: 'Courier New', monospace;
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        .description {
+            color: #4a5568;
+            margin-top: 5px;
+        }
+        .api-section {
+            margin-top: 30px;
+        }
+        .api-section h2 {
+            color: #2d3748;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Shell Job Queue Server</h1>
+        
+        <div class="status-card">
+            <h2>✅ Server Status: Running</h2>
+            <p>Your shell job queue server is up and running on port 8080.</p>
+            <p>This page is served from the <code>public/</code> directory.</p>
+        </div>
+
+        <div class="api-section">
+            <h2>📋 Available API Endpoints</h2>
+            
+            <div class="endpoint">
+                <div class="method">POST</div>
+                <div class="url">/jobs</div>
+                <div class="description">Submit a new job to the queue</div>
+            </div>
+            
+            <div class="endpoint">
+                <div class="method">GET</div>
+                <div class="url">/jobs</div>
+                <div class="description">List all jobs in the queue</div>
+            </div>
+            
+            <div class="endpoint">
+                <div class="method">GET</div>
+                <div class="url">/jobs/{id}/status</div>
+                <div class="description">Get the current status of a specific job</div>
+            </div>
+            
+            <div class="endpoint">
+                <div class="method">GET</div>
+                <div class="url">/jobs/{id}/result</div>
+                <div class="description">Get the output result of a completed job</div>
+            </div>
+            
+            <div class="endpoint">
+                <div class="method">GET</div>
+                <div class="url">/jobs/{id}/log</div>
+                <div class="description">Get the error log of a job</div>
+            </div>
+            
+            <div class="endpoint">
+                <div class="method">PUT</div>
+                <div class="url">/jobs/{id}/cancel</div>
+                <div class="description">Cancel a running job</div>
+            </div>
+        </div>
+
+        <div class="status-card">
+            <h3>💡 How to use:</h3>
+            <p>You can place any static files (HTML, CSS, JS, images, etc.) in the <code>public/</code> directory and they will be served at the root path.</p>
+            <p>For example, if you create <code>public/style.css</code>, it will be available at <code>http://localhost:8080/style.css</code></p>
+        </div>
+    </div>
+</body>
+</html>
