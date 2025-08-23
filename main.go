@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,6 +43,7 @@ var (
 	runningJobs = make(map[string]*RunningJob)
 	queue       = make(chan *queuedJob, 100)
 	mu          sync.Mutex
+	startTime   = time.Now()
 )
 
 type RunningJob struct {
@@ -62,6 +64,9 @@ func main() {
 	// Get the public directory path
 	publicDir := getPublicDir()
 	fmt.Fprintf(os.Stderr, "Serving static files from: %s\n", publicDir)
+
+	// Start cleanup goroutine to check for orphaned processes
+	go cleanupOrphanedJobs()
 
 	// Serve static files from public directory
 	fs := http.FileServer(http.Dir(publicDir))
@@ -109,6 +114,12 @@ func main() {
     <div class="endpoint">
         <strong>PUT /jobs/{id}/cancel</strong> - Cancel a running job
     </div>
+    <div class="endpoint">
+        <strong>GET /status</strong> - Get server status
+    </div>
+    <div class="endpoint">
+        <strong>POST /status</strong> - Trigger manual cleanup of orphaned jobs
+    </div>
 </body>
 </html>`, publicDir)
 				return
@@ -123,6 +134,9 @@ func main() {
 	})
 	http.HandleFunc("/jobs/", func(w http.ResponseWriter, r *http.Request) {
 		jobsHandler(w, r, fixedArgs)
+	})
+	http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		statusHandler(w, r)
 	})
 	go workerLoop()
 	err := http.ListenAndServe(":8080", nil)
@@ -375,6 +389,9 @@ func sendWebhook(meta *JobMeta) {
 }
 
 func listJobs(w http.ResponseWriter, r *http.Request) {
+	// Check for orphaned jobs before listing
+	checkForOrphanedJobs()
+
 	entries, err := os.ReadDir(getJobsDir())
 	if err != nil {
 		http.Error(w, "Failed to read jobs directory", http.StatusInternalServerError)
@@ -432,6 +449,75 @@ func listJobs(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(jobs)
 }
 
+// checkForOrphanedJobs checks for jobs that are marked as IN_PROGRESS but their processes are no longer running
+func checkForOrphanedJobs() {
+	entries, err := os.ReadDir(getJobsDir())
+	if err != nil {
+		return
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		metaPath := filepath.Join(getJobsDir(), entry.Name(), "meta.json")
+		data, err := os.ReadFile(metaPath)
+		if err != nil {
+			continue
+		}
+
+		var meta JobMeta
+		if err := json.Unmarshal(data, &meta); err != nil {
+			continue
+		}
+
+		// Check if job is marked as IN_PROGRESS but process is not running
+		if meta.Status == "IN_PROGRESS" && meta.PID > 0 {
+			mu.Lock()
+			// Check if job is in runningJobs map
+			if _, exists := runningJobs[meta.ID]; !exists {
+				// Job is not in runningJobs map, check if process is still running
+				if !isProcessRunning(meta.PID) {
+					// Process is not running, mark as orphaned
+					meta.Status = "ORPHANED"
+					meta.CompletedAt = time.Now()
+					saveMeta(&meta)
+					if os.Getenv("DEBUG") == "1" {
+						fmt.Fprintf(os.Stderr, "[DEBUG] Found orphaned job %s (PID %d) and marked as ORPHANED\n", meta.ID, meta.PID)
+					}
+				}
+			}
+			mu.Unlock()
+		}
+	}
+}
+
+func statusHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		// Manual cleanup trigger
+		checkForOrphanedJobs()
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Cleanup completed"))
+		return
+	}
+
+	// GET request - return server status
+	mu.Lock()
+	runningCount := len(runningJobs)
+	mu.Unlock()
+
+	status := map[string]interface{}{
+		"status":         "running",
+		"running_jobs":   runningCount,
+		"uptime":         time.Since(startTime).String(),
+		"jobs_directory": getJobsDir(),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
+}
+
 func getJobsDir() string {
 	dir := os.Getenv("JOBS_DIR")
 	if dir == "" {
@@ -459,4 +545,42 @@ func getPublicDir() string {
 
 	// Fallback to "public" in current directory
 	return "public"
+}
+
+func cleanupOrphanedJobs() {
+	for {
+		time.Sleep(1 * time.Minute) // Check every minute
+		mu.Lock()
+		for id, job := range runningJobs {
+			if job.Meta.Status == "IN_PROGRESS" && isProcessRunning(job.Meta.PID) {
+				// If the job is still running and the PID is valid, continue
+				continue
+			}
+			// If the job is not running or the PID is invalid, mark it as orphaned
+			job.Meta.Status = "ORPHANED"
+			job.Meta.CompletedAt = time.Now()
+			saveMeta(job.Meta)
+			fmt.Fprintf(os.Stderr, "Job %s (PID %d) marked as orphaned.\n", id, job.Meta.PID)
+			delete(runningJobs, id)
+		}
+		mu.Unlock()
+	}
+}
+
+func isProcessRunning(pid int) bool {
+	if pid == 0 {
+		return false
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = process.Signal(syscall.Signal(0)) // Try to send a signal to the process
+	if err == nil {
+		return true
+	}
+	if err.Error() == "os: process already finished" {
+		return false
+	}
+	return false
 }
