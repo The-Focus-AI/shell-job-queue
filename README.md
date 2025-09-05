@@ -7,7 +7,9 @@ This is a simple, file-backed job queue server written in Go. Each job runs as a
 - Jobs are executed as child processes
 - Each job logs `stderr` and stores `stdout` as the final result
 - Persistent metadata and logs saved to the filesystem
-- Webhook support to notify external services on job completion
+- **Configurable notifications** with support for:
+  - Traditional webhooks on job completion
+  - Slack webhooks with rich formatting for job start and/or completion events
 - REST API for job submission, status tracking, result fetching, and cancellation
 - **Static file serving** from `public/` directory at the root path
 
@@ -79,6 +81,7 @@ Serving static files from: /path/to/public
 
 ### 3. Submit a Job
 
+**Basic job submission:**
 ```bash
 curl -X POST http://localhost:8080/jobs \
   -H 'Content-Type: application/json' \
@@ -88,6 +91,27 @@ curl -X POST http://localhost:8080/jobs \
     "webhook": "https://webhook.site/your-id"
   }'
 ```
+
+**With Slack notifications:**
+```bash
+curl -X POST http://localhost:8080/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "args": ["python", "my_script.py"],
+    "mime_type": "text/plain",
+    "slack_webhook": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK",
+    "notify_on_start": true,
+    "notify_on_finish": true
+  }'
+```
+
+**Job submission parameters:**
+- `args` (required): Array of command and arguments to execute
+- `mime_type` (optional): MIME type for the result content
+- `webhook` (optional): URL for traditional webhook notifications (triggered on job completion)
+- `slack_webhook` (optional): Slack webhook URL for rich notifications
+- `notify_on_start` (optional): Send Slack notification when job starts (default: false)
+- `notify_on_finish` (optional): Send Slack notification when job completes (default: false)
 
 ### 4. Check Status
 
@@ -134,6 +158,9 @@ curl -X PUT http://localhost:8080/jobs/<job-id>/cancel
   "args": ["echo", "Hello, world!"],
   "mime_type": "text/plain",
   "webhook": "https://webhook.site/your-id",
+  "slack_webhook": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK",
+  "notify_on_start": true,
+  "notify_on_finish": true,
   "status": "IN_QUEUE",
   "enqueued_at": "2024-01-01T12:00:00Z",
   "status_url": "/jobs/550e8400-e29b-41d4-a716-446655440000/status",
@@ -141,6 +168,50 @@ curl -X PUT http://localhost:8080/jobs/<job-id>/cancel
   "log_url": "/jobs/550e8400-e29b-41d4-a716-446655440000/log"
 }
 ```
+
+---
+
+## 🔔 Notifications
+
+The job queue supports two types of webhook notifications:
+
+### Traditional Webhooks
+- Triggered only when jobs complete (success, failure, or cancellation)
+- Simple JSON payload with job metadata
+- Backward compatible with existing integrations
+
+**Payload format:**
+```json
+{
+  "id": "job-id",
+  "status": "COMPLETED|FAILED|CANCELED",
+  "result_url": "/jobs/job-id/result",
+  "log_url": "/jobs/job-id/log"
+}
+```
+
+### Slack Webhooks
+- Rich formatting with job details and status colors
+- Configurable for job start and/or completion events
+- Includes clickable links to logs and results
+
+**Slack notification features:**
+- **Start notifications**: Alert when a job begins execution
+- **Completion notifications**: Alert when a job finishes with status-specific formatting
+- **Rich formatting**: Command details, timing information, and direct links
+- **Status colors**: Green for success, red for failure, blue for cancellation
+
+**Example Slack notification setup:**
+```json
+{
+  "args": ["python", "data_processor.py"],
+  "slack_webhook": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK",
+  "notify_on_start": true,
+  "notify_on_finish": true
+}
+```
+
+Both notification types can be used simultaneously for the same job.
 
 ---
 
